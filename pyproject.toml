@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "headland-rl"
+version = "0.1.0"
+description = "Entorno parametrizable de cambio de calle (headland turn) para RL"
+requires-python = ">=3.10"
+dependencies = [
+  "gymnasium>=0.29",
+  "numpy>=1.24",
+  "matplotlib>=3.7",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+train = [
+  "stable-baselines3>=2.0",
+  "torch>=2.0",
+  "scipy>=1.10",
+  "statsmodels>=0.14",
+]
+dev = ["pytest>=7.0"]
+
+[dependency-groups]
+dev = ["pytest>=7.0"]
+train = [
+  "stable-baselines3>=2.0",
+  "torch>=2.0",
+  "scipy>=1.10",
+  "statsmodels>=0.14",
+  "tensorboard>=2.0",
+]
+
+# torch CPU en Windows (evita la rueda CUDA de ~2GB que no se usara)
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cpu", marker = "sys_platform == 'win32'" },
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

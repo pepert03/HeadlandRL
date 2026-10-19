@@ -1,0 +1,24 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+runs/
+wandb/
+.vscode/
+.DS_Store
+
+# Copias de seguridad sueltas
+/headlandrl.zip
+
+# Auxiliares de LaTeX (report/)
+*.aux
+*.log
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.out
+*.toc

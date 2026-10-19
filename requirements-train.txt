@@ -1,0 +1,7 @@
+# Solo para fases 5+ (entrenamiento PPO). No necesario para el entorno base.
+-r requirements.txt
+stable-baselines3>=2.0
+tensorboard>=2.0
+torch>=2.0
+scipy>=1.10
+statsmodels>=0.14

@@ -1,0 +1,38 @@
+# Paso A: entrenamiento PPO SIN aleatorizacion (condicion A, referencia inferior).
+# Geometria y vehiculo fijos (Twizy de referencia); recompensa v0 provisional.
+condition: A
+dr_mode: fixed
+privileged: false
+n_envs: 8
+total_timesteps: 1200000
+curriculum_steps: 800000
+eval_freq: 10000
+n_eval_episodes: 10
+
+env:
+  dt: 0.05
+  max_steps: 500
+  pos_tol: 0.30
+  ang_tol_deg: 10.0
+  # curriculum (callback): tolerancias 2.0m/90deg -> estrictas y
+  # velocidad 0.6 -> 2.0 m/s durante los primeros curriculum_steps
+  fixed_vehicle: {L: 1.69, delta_max_deg: 26.0, tau_v: 0.3, tau_delta: 0.5, v_max: 2.0}
+  fixed_crop: {row_spacing: 2.5, headland_width: 6.0, n_lanes: 1, row_width: 0.5, crop_depth: 5.0, x_margin: 2.0, y_margin_top: 1.0}
+  reward: {w_progress: 3.0, w_angle: 1.0, w_time: 0.05, w_smooth: 0.005, success_bonus: 100.0, collision_penalty: -10.0, zone_bonus: 10.0, zone_pos: 1.0, zone_ang_deg: 45.0}
+
+# Referencia experta para backplay (3 puntos, estricto). Sin ella el caso
+# nominal no se descubre (Dubins solo-avance infactible con H=6, Rmin=3.47).
+reference: data/references/reference_A.npy
+
+ppo:
+  learning_rate: 0.0003
+  n_steps: 1024
+  batch_size: 256
+  n_epochs: 10
+  gamma: 0.995
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.02
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  net_arch: [64, 64]

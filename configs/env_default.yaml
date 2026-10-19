@@ -1,0 +1,50 @@
+# Config por defecto del entorno (fase 2-3 del plan).
+# Rangos de DR tomados del report; el resto son decisiones v0 documentadas.
+env_id: HeadlandTurn-v0
+dr_mode: joint        # fixed | geometry | dynamics | joint
+privileged: false
+dt: 0.05
+max_steps: 400
+pos_tol: 0.30
+ang_tol_deg: 10.0
+
+fixed_vehicle:
+  L: 1.69
+  delta_max_deg: 26.0
+  tau_v: 0.3
+  tau_delta: 0.5
+  v_max: 2.0
+
+fixed_crop:
+  row_spacing: 2.5
+  headland_width: 6.0
+  n_lanes: 1
+  row_width: 0.5
+  crop_depth: 5.0
+  x_margin: 2.0
+  y_margin_top: 1.0
+
+ranges:  # entrenamiento (dentro de distribucion)
+  row_spacing: [1.8, 3.2]
+  headland_width: [3.0, 10.0]
+  n_lanes: [1, 4]
+  L: [1.4, 2.0]
+  delta_max_deg: [20.0, 35.0]
+  tau_v: [0.1, 0.5]
+  tau_delta: [0.2, 0.8]
+
+init_noise:
+  x_std: 0.15
+  y_std: 0.15
+  theta_std_deg: 5.0
+
+reward:  # v3: progreso euclideo + terminales (ver headland_env.py)
+  w_progress: 1.0
+  w_angle: 0.0
+  w_time: 0.01
+  w_smooth: 0.005
+  success_bonus: 100.0
+  collision_penalty: -25.0
+  zone_bonus: 10.0
+  zone_pos: 1.0
+  zone_ang_deg: 45.0
