@@ -28,11 +28,12 @@ import numpy as np
 from gymnasium import spaces
 
 from .geometry import (
-    check_collision,
+    check_footprint_collision,
     feasibility_margin,
+    footprint_min_row_distance,
+    footprint_points,
     goal_pose,
     is_likely_infeasible,
-    min_distance_to_rows,
     pose_errors,
     start_pose,
     wrap_angle,
@@ -43,8 +44,7 @@ from .randomization import DRMode, sample_episode_params
 
 
 DEFAULT_DELTA_ABS_DEG = 35.0  # techo del espacio de accion (fijo p/ DR)
-DEFAULT_V_MAX = 2.0
-DEFAULT_V_REV = 1.0
+V_STOP = 0.02  # [m/s] por debajo se considera parado (cambio de marcha)
 
 
 class HeadlandTurnEnv(gym.Env):
@@ -57,7 +57,7 @@ class HeadlandTurnEnv(gym.Env):
         dr_mode: DRMode | str = DRMode.FIXED,
         privileged: bool = False,
         dt: float = 0.05,
-        max_steps: int = 400,
+        max_steps: int = 1000,
         fixed_vehicle: VehicleParams | None = None,
         fixed_crop: CropParams | None = None,
         ranges: DomainRanges | None = None,
@@ -66,8 +66,8 @@ class HeadlandTurnEnv(gym.Env):
         ang_tol_deg: float = 10.0,
         curr_pos_0: float = 2.0,
         curr_ang_0_deg: float = 90.0,
-        curr_speed_0: float = 0.6,
-        curr_speed_1: float = 2.0,
+        curr_speed_0: float = 0.4,
+        curr_speed_1: float = 0.83,
         # pesos de recompensa v3 (fase 4): progreso euclideo + terminales.
         # (v2 usaba el progreso Dubins, que castiga la marcha atras; ver step)
         w_progress: float = 3.0,
@@ -135,24 +135,28 @@ class HeadlandTurnEnv(gym.Env):
         self.render_mode = render_mode
 
         # Espacio de accion FIJO (para que SB3 no cambie entre episodios DR):
-        # [v_cmd en [-V_REV, V_MAX], delta_cmd en [-35, +35] deg].
+        # [v_cmd en [-v_rev_max, v_max], delta_cmd en [-35, +35] deg].
         # v<0 = marcha atras (imprescindible: el caso nominal no admite
         # maniobra solo-avance). Se recorta a los limites del episodio.
+        # v_max y v_rev_max no se aleatorizan: salen del vehiculo fijo.
         d_abs = math.radians(DEFAULT_DELTA_ABS_DEG)
+        v_hi = self.fixed_vehicle.v_max
+        v_lo = -self.fixed_vehicle.v_rev_max
         self.action_space = spaces.Box(
-            low=np.array([-DEFAULT_V_REV, -d_abs], dtype=np.float32),
-            high=np.array([DEFAULT_V_MAX, d_abs], dtype=np.float32),
+            low=np.array([v_lo, -d_abs], dtype=np.float32),
+            high=np.array([v_hi, d_abs], dtype=np.float32),
             dtype=np.float32,
         )
 
-        # Observacion base (10 dims):
-        # [x, y, cos(th), sin(th), v, delta, dx_goal, dy_goal, cos(dth), sin(dth)]
+        # Observacion base (12 dims):
+        # [x, y, cos(th), sin(th), v, delta, dx_goal, dy_goal, cos(dth), sin(dth),
+        #  marcha (+1/-1), progreso del cambio de marcha en curso [0,1]]
         # Si privileged=True se concatenan 7 params reales normalizados [0,1].
         base_low = np.array(
-            [-10, -10, -1, -1, -DEFAULT_V_REV, -d_abs, -20, -20, -1, -1], dtype=np.float32
+            [-10, -10, -1, -1, v_lo, -d_abs, -20, -20, -1, -1, -1, 0], dtype=np.float32
         )
         base_high = np.array(
-            [20, 20, 1, 1, DEFAULT_V_MAX, d_abs, 20, 20, 1, 1], dtype=np.float32
+            [20, 20, 1, 1, v_hi, d_abs, 20, 20, 1, 1, 1, 1], dtype=np.float32
         )
         if privileged:
             low = np.concatenate([base_low, np.zeros(7, dtype=np.float32)])
@@ -171,6 +175,9 @@ class HeadlandTurnEnv(gym.Env):
         self._prev_action = np.zeros(2, dtype=np.float64)
         self._trail: list[tuple[float, float]] = []
         self._min_row_dist = math.inf
+        self._gear = 1  # +1 adelante, -1 atras
+        self._gear_timer = 0.0
+        self._n_switches = 0
 
     # ------------------------------------------------------------------ API
     def reset(
@@ -215,6 +222,9 @@ class HeadlandTurnEnv(gym.Env):
         self._prev_dub = self._dubins_to_goal()
         self._zone_given = False
         self._rev_steps = 0  # pasos en marcha atras (metrica 11: segmentos)
+        self._gear = 1
+        self._gear_timer = 0.0
+        self._n_switches = 0  # cambios de marcha (metrica 11: segmentos)
         self._steps = 0
         self._prev_action = np.zeros(2)
         self._trail = [(float(s0[0]), float(s0[1]))]
@@ -236,11 +246,28 @@ class HeadlandTurnEnv(gym.Env):
         d_lim = self.params.vehicle.delta_max
         delta_cmd = float(np.clip(action[1], -d_lim, d_lim))
 
-        # Dinamica de primer orden (Euler explicito)
+        # Cambio de marcha: si la orden pide el sentido contrario a la marcha
+        # engranada, el vehiculo frena hasta parar y espera gear_switch_time
+        # antes de engranar la nueva (en el Twizy la marcha se cambia por CAN
+        # emulando los botones). Mientras tanto la consigna de velocidad es 0.
         x, y, th, v, delta = self._state
+        want = 1 if v_cmd > 1e-3 else (-1 if v_cmd < -1e-3 else 0)
+        v_target = v_cmd
+        if want != 0 and want != self._gear:
+            v_target = 0.0
+            if abs(v) < V_STOP:
+                self._gear_timer += self.dt
+                if self._gear_timer >= self.params.vehicle.gear_switch_time - 1e-9:
+                    self._gear = want
+                    self._gear_timer = 0.0
+                    self._n_switches += 1
+        else:
+            self._gear_timer = 0.0
+
+        # Dinamica de primer orden (Euler explicito)
         tau_v = self.params.vehicle.tau_v
         tau_d = self.params.vehicle.tau_delta
-        v = v + (v_cmd - v) * (self.dt / max(tau_v, 1e-6))
+        v = v + (v_target - v) * (self.dt / max(tau_v, 1e-6))
         delta = delta + (delta_cmd - delta) * (self.dt / max(tau_d, 1e-6))
         delta = float(np.clip(delta, -d_lim, d_lim))
         v = float(np.clip(v, -v_rev, self.params.vehicle.v_max))
@@ -257,11 +284,10 @@ class HeadlandTurnEnv(gym.Env):
         self._trail.append((x, y))
 
         dpos, dtheta = pose_errors(self._state[:3], self._goal)
-        collided, reason = check_collision(x, y, self.params)
-        if in_crop := (y < 0.0):
-            self._min_row_dist = min(
-                self._min_row_dist, min_distance_to_rows(x, self.params)
-            )
+        collided, reason = check_footprint_collision(x, y, th, self.params)
+        self._min_row_dist = min(
+            self._min_row_dist, footprint_min_row_distance(x, y, th, self.params)
+        )
 
         success = (dpos < self._cur_pos) and (dtheta < self._cur_ang)
         timeout = self._steps >= self.max_steps
@@ -308,6 +334,7 @@ class HeadlandTurnEnv(gym.Env):
             "R_min": self.params.vehicle.r_min,
             "x_goal": float(self._goal[0]),
             "rev_steps": self._rev_steps,
+            "gear_switches": self._n_switches,
         }
         if self.render_mode == "human":
             self.render()
@@ -318,9 +345,10 @@ class HeadlandTurnEnv(gym.Env):
         x, y, th, v, delta = self._state
         dx, dy = float(self._goal[0] - x), float(self._goal[1] - y)
         dth = wrap_angle(float(self._goal[2]) - th)
+        switch = self._gear_timer / max(self.params.vehicle.gear_switch_time, 1e-6)
         base = np.array(
             [x, y, math.cos(th), math.sin(th), v, delta,
-             dx, dy, math.cos(dth), math.sin(dth)],
+             dx, dy, math.cos(dth), math.sin(dth), float(self._gear), switch],
             dtype=np.float32,
         )
         if not self.privileged:
@@ -372,7 +400,7 @@ class HeadlandTurnEnv(gym.Env):
 
         Usa la referencia experta si se dio (`reference_poses`) o la Dubins
         en su defecto. Si el punto cae en colision, se avanza al objetivo
-        hasta una pose libre.
+        hasta una pose libre (huella completa).
         """
         if self._ref_override is not None:
             poses = [tuple(p) for p in self._ref_override]
@@ -385,8 +413,8 @@ class HeadlandTurnEnv(gym.Env):
             )
         idx = min(int(u * (len(poses) - 1)), len(poses) - 1)
         while idx < len(poses) - 1:
-            x, y, _ = poses[idx]
-            collided, _ = check_collision(x, y, self.params)
+            x, y, th = poses[idx]
+            collided, _ = check_footprint_collision(x, y, th, self.params)
             if not collided:
                 break
             idx += 1
@@ -429,6 +457,8 @@ class HeadlandTurnEnv(gym.Env):
             tr = np.array(self._trail)
             ax.plot(tr[:, 0], tr[:, 1], "b-", lw=1.5)
         x, y, th = self._state[:3]
+        fp = footprint_points(x, y, th, self.params, ds=0.5)
+        ax.fill(fp[:, 0], fp[:, 1], color="blue", alpha=0.25)
         ax.arrow(x, y, 0.4 * math.cos(th), 0.4 * math.sin(th),
                  head_width=0.15, color="blue")
         ax.set_aspect("equal")

@@ -10,7 +10,8 @@ Rangos por defecto tomados del report (Propuesta revisada + "Modelo, parametros,
   - tau_delta:              0.2 - 0.8 s
 
 v_max, anchos de fila, ruidos iniciales y tolerancias NO estan en el report:
-son decisiones de implementacion v0, marcadas como tales.
+son decisiones de implementacion v0, marcadas como tales. v_max y la huella
+salen del articulo del Twizy (Bengochea-Guevara et al., Smart Agric. Tech. 2025).
 """
 from __future__ import annotations
 
@@ -26,9 +27,19 @@ class VehicleParams:
     delta_max_deg: float = 26.0  # angulo max. direccion [deg], Twizy real ~26
     tau_v: float = 0.3  # cte. tiempo velocidad [s] (lazo cerrado completo)
     tau_delta: float = 0.5  # cte. tiempo direccion [s] (lazo cerrado completo)
-    v_max: float = 2.0  # velocidad lineal maxima [m/s] (decision v0)
-    v_rev_max: float = 1.0  # marcha atras maxima [m/s] (necesaria: el nominal
-    # Twizy+H=6 no admite Dubins solo-avance; metrica 11 del report lo anticipa)
+    v_max: float = 0.83  # velocidad lineal maxima [m/s]: 3 km/h, tope de
+    # operacion del Twizy en vinedo (Bengochea-Guevara et al. 2025)
+    v_rev_max: float = 0.5  # marcha atras maxima [m/s] (decision v0; necesaria:
+    # el nominal Twizy+H=6 no admite Dubins solo-avance, metrica 11 del report)
+    gear_switch_time: float = 1.0  # [s] parado para cambiar adelante/atras
+    # (decision v0: la marcha se cambia por CAN emulando los botones; a medir)
+    # Huella (rectangulo) respecto al eje trasero, punto de referencia del
+    # modelo bicicleta. Twizy: 2.32 x 1.19 m (chasis 1.23 m con ruedas de campo);
+    # largo = rear_overhang + L + front_overhang. Voladizos repartidos a partes
+    # iguales (decision v0, a medir).
+    width: float = 1.23  # [m]
+    front_overhang: float = 0.315  # [m] eje delantero -> parachoques
+    rear_overhang: float = 0.315  # [m] eje trasero -> parachoques
 
     @property
     def delta_max(self) -> float:

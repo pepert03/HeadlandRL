@@ -111,14 +111,14 @@ def main() -> None:
         policy_kwargs={"net_arch": net_arch},
         **pc,
     )
-    # Prior de avance (fase 4): la media inicial de v_cmd se sitia en +1 m/s.
+    # Prior de avance (fase 4): la media inicial de v_cmd se situa en +0.5 m/s.
     # Sin esto, las colisiones tempranas empujan la media a v<0 (recortada a 0
     # por el espacio de accion) y la politica queda aparcada para siempre en
     # un optimo local del que PPO no escapa (gradiente nulo en el clip).
     import torch
 
     with torch.no_grad():
-        model.policy.action_net.bias[0] += 1.0
+        model.policy.action_net.bias[0] += 0.5
     print(f"[train] condicion={cfg.get('condition')} dr_mode={cfg.get('dr_mode')} "
           f"seed={args.seed} timesteps={total} -> {outdir}")
     model.learn(total_timesteps=total, callback=callbacks)

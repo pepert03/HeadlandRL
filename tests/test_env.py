@@ -11,10 +11,10 @@ from headland_rl.envs.randomization import DRMode
 def test_reset_step_shapes():
     env = HeadlandTurnEnv(dr_mode="fixed")
     obs, _ = env.reset(seed=0)
-    assert obs.shape == (10,)
+    assert obs.shape == (12,)
     for _ in range(5):
         obs, rew, term, trunc, info = env.step(env.action_space.sample())
-        assert obs.shape == (10,)
+        assert obs.shape == (12,)
         assert isinstance(rew, float)
         assert "success" in info and "collided" in info
         if term or trunc:
@@ -24,8 +24,8 @@ def test_reset_step_shapes():
 def test_privileged_obs_dim():
     env = HeadlandTurnEnv(dr_mode="joint", privileged=True)
     obs, _ = env.reset(seed=1)
-    assert obs.shape == (17,)
-    assert ((obs[10:] >= 0.0) & (obs[10:] <= 1.0)).all()
+    assert obs.shape == (19,)
+    assert ((obs[12:] >= 0.0) & (obs[12:] <= 1.0)).all()
 
 
 def test_dr_modes_change_params():
@@ -64,3 +64,34 @@ def test_collision_in_vines():
     env._state[1] = -1.0
     _, _, term, _, info = env.step([0.0, 0.0])
     assert info["collided"] and term
+
+
+def test_footprint_collides_where_point_does_not():
+    from headland_rl.envs.geometry import check_collision, check_footprint_collision
+
+    env = HeadlandTurnEnv(dr_mode="fixed")
+    env.reset(seed=0)
+    p = env.get_params()
+    # Eje trasero 0.5 m desplazado del centro de la calle: el punto cabe
+    # (holgura 1.0 m) pero el chasis de 1.23 m roza la fila.
+    assert not check_collision(0.5, -1.0, p)[0]
+    assert check_footprint_collision(0.5, -1.0, math.pi / 2, p)[0]
+    assert not check_footprint_collision(0.0, -1.0, math.pi / 2, p)[0]
+
+
+def test_gear_switch_requires_stop_and_delay():
+    env = HeadlandTurnEnv(dr_mode="fixed")
+    env.reset(seed=0)
+    for _ in range(40):  # coger velocidad hacia delante
+        env.step([0.8, 0.0])
+    assert env._state[3] > 0.5
+    steps_to_reverse = 0
+    while env._state[3] >= 0.0:
+        _, _, term, _, info = env.step([-0.5, 0.0])
+        steps_to_reverse += 1
+        assert not term
+        assert steps_to_reverse < 200
+    # frenar (~1 s) + gear_switch_time (1 s) a dt=0.05
+    t_switch = env.get_params().vehicle.gear_switch_time
+    assert steps_to_reverse * env.dt > t_switch
+    assert info["gear_switches"] == 1

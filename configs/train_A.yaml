@@ -11,12 +11,12 @@ n_eval_episodes: 10
 
 env:
   dt: 0.05
-  max_steps: 500
+  max_steps: 1000
   pos_tol: 0.30
   ang_tol_deg: 10.0
   # curriculum (callback): tolerancias 2.0m/90deg -> estrictas y
-  # velocidad 0.6 -> 2.0 m/s durante los primeros curriculum_steps
-  fixed_vehicle: {L: 1.69, delta_max_deg: 26.0, tau_v: 0.3, tau_delta: 0.5, v_max: 2.0}
+  # velocidad 0.4 -> 0.83 m/s durante los primeros curriculum_steps
+  fixed_vehicle: {L: 1.69, delta_max_deg: 26.0, tau_v: 0.3, tau_delta: 0.5, v_max: 0.83}
   fixed_crop: {row_spacing: 2.5, headland_width: 6.0, n_lanes: 1, row_width: 0.5, crop_depth: 5.0, x_margin: 2.0, y_margin_top: 1.0}
   reward: {w_progress: 3.0, w_angle: 1.0, w_time: 0.05, w_smooth: 0.005, success_bonus: 100.0, collision_penalty: -10.0, zone_bonus: 10.0, zone_pos: 1.0, zone_ang_deg: 45.0}
 

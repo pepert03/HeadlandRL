@@ -81,6 +81,69 @@ def check_collision(x: float, y: float, params: EpisodeParams) -> tuple[bool, st
     return False, ""
 
 
+def footprint_points(
+    x: float, y: float, th: float, params: EpisodeParams, ds: float = 0.05
+) -> np.ndarray:
+    """Puntos del perimetro de la huella del vehiculo (N, 2).
+
+    (x, y, th) es la pose del eje trasero. Basta muestrear el perimetro:
+    las filas de vinas son franjas que llegan hasta y=0 desde el fondo del
+    cultivo, asi que si cortan el rectangulo cortan tambien su borde.
+    `ds` debe ser menor que row_width para no saltarse una fila.
+    """
+    veh = params.vehicle
+    xr, xf = -veh.rear_overhang, veh.L + veh.front_overhang
+    hw = veh.width / 2.0
+    corners = np.array([[xr, -hw], [xf, -hw], [xf, hw], [xr, hw], [xr, -hw]])
+    pts = []
+    for a, b in zip(corners[:-1], corners[1:]):
+        n = max(int(math.ceil(np.hypot(*(b - a)) / ds)), 1)
+        t = np.arange(n)[:, None] / n
+        pts.append(a + t * (b - a))
+    local = np.vstack(pts)
+    c, s = math.cos(th), math.sin(th)
+    return np.column_stack([
+        x + c * local[:, 0] - s * local[:, 1],
+        y + s * local[:, 0] + c * local[:, 1],
+    ])
+
+
+def check_footprint_collision(
+    x: float, y: float, th: float, params: EpisodeParams
+) -> tuple[bool, str]:
+    """Como `check_collision`, pero para toda la huella del vehiculo."""
+    pts = footprint_points(x, y, th, params)
+    crop = params.crop
+    x_goal = crop.n_lanes * crop.row_spacing
+    px, py = pts[:, 0], pts[:, 1]
+    if (py > crop.headland_width + crop.y_margin_top).any():
+        return True, "out_of_bounds_top"
+    if (py < -crop.crop_depth).any():
+        return True, "out_of_bounds_bottom"
+    if ((px < -crop.x_margin) | (px > x_goal + crop.x_margin)).any():
+        return True, "out_of_bounds_side"
+    free_half = (crop.row_spacing - crop.row_width) / 2.0
+    d_center = np.abs(px - np.round(px / crop.row_spacing) * crop.row_spacing)
+    if ((py < 0.0) & (d_center > free_half)).any():
+        return True, "vine_row"
+    return False, ""
+
+
+def footprint_min_row_distance(
+    x: float, y: float, th: float, params: EpisodeParams
+) -> float:
+    """Holgura lateral minima de la huella a las filas (inf si no esta en cultivo)."""
+    pts = footprint_points(x, y, th, params)
+    in_crop = pts[:, 1] < 0.0
+    if not in_crop.any():
+        return math.inf
+    crop = params.crop
+    free_half = (crop.row_spacing - crop.row_width) / 2.0
+    px = pts[in_crop, 0]
+    d_center = np.abs(px - np.round(px / crop.row_spacing) * crop.row_spacing)
+    return float(max(0.0, (free_half - d_center).min()))
+
+
 def min_distance_to_rows(x: float, params: EpisodeParams) -> float:
     """Distancia lateral al borde de fila de vinas mas cercano (>=0).
 

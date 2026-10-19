@@ -4,7 +4,7 @@ env_id: HeadlandTurn-v0
 dr_mode: joint        # fixed | geometry | dynamics | joint
 privileged: false
 dt: 0.05
-max_steps: 400
+max_steps: 1000
 pos_tol: 0.30
 ang_tol_deg: 10.0
 
@@ -13,7 +13,7 @@ fixed_vehicle:
   delta_max_deg: 26.0
   tau_v: 0.3
   tau_delta: 0.5
-  v_max: 2.0
+  v_max: 0.83
 
 fixed_crop:
   row_spacing: 2.5
