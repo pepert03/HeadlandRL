@@ -1,4 +1,5 @@
 import math
+import numpy as np
 import sys
 from pathlib import Path
 
@@ -95,3 +96,34 @@ def test_gear_switch_requires_stop_and_delay():
     t_switch = env.get_params().vehicle.gear_switch_time
     assert steps_to_reverse * env.dt > t_switch
     assert info["gear_switches"] == 1
+
+
+def test_ref_progress_counts_reverse_segment():
+    import numpy as np
+
+    ref = np.load(Path(__file__).resolve().parents[1] / "data/references/reference_A.npy")
+    env = HeadlandTurnEnv(dr_mode="fixed", reference_poses=ref, w_ref_progress=1.0)
+    env.reset(seed=0)
+    assert (env._ref_dir == -1).any(), "la referencia A tiene un tramo marcha atras"
+    total, rev = 0.0, 0.0
+    for i, pose in enumerate(ref[1:], start=1):
+        env._state[:3] = pose
+        p = env._ref_progress()
+        total += p
+        if env._ref_dir[i - 1] < 0:
+            rev += p
+    assert rev > 0.5  # el tramo atras suma, no resta
+    assert abs(total - (len(ref) - 1) * env._ref_ds) < 0.5
+
+
+def test_normalized_actions_mapping():
+    from headland_rl.envs.wrappers import NormalizedActions
+
+    env = NormalizedActions(HeadlandTurnEnv(dr_mode="fixed"))
+    veh = env.unwrapped.fixed_vehicle
+    assert np.allclose(env.action([1.0, 0.0]), [veh.v_max, 0.0])
+    assert np.allclose(env.action([-1.0, 0.0]), [-veh.v_rev_max, 0.0])
+    assert np.allclose(env.action([0.0, 1.0]), [0.0, math.radians(35.0)])
+    obs, _ = env.reset(seed=0)
+    obs, *_ = env.step(env.action_space.sample())
+    assert obs.shape == (12,)

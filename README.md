@@ -49,6 +49,7 @@ data/
   demos/                   # pares (obs, act) para BC
 src/headland_rl/
   __init__.py              # registra "HeadlandTurn-v0" en Gymnasium
+  config.py                # build_env(cfg): entorno identico al de entrenamiento
   envs/
     headland_env.py        # HeadlandTurnEnv
     params.py              # VehicleParams / CropParams / DomainRanges
@@ -63,6 +64,7 @@ scripts/
   plan_reference.py        # Hybrid A* con huella -> data/references/reference_A.npy
   search_reference.py      # (obsoleto: no encuentra la maniobra con la huella)
   expert_3point.py         # (obsoleto: choca con la huella)
+  visualize_policy.py      # animacion de una politica (GIF/MP4/ventana)
   run_random_agent.py, view_env.py
   diag/                    # sondas y comprobaciones puntuales
 tests/
@@ -85,6 +87,8 @@ uv run python scripts/view_env.py --episodes 3           # ventana en vivo
 uv run python scripts/plan_reference.py     # solo si falta data/references/reference_A.npy (~1 min)
 uv run python scripts/train.py --config configs/train_A.yaml --seed 0
 uv run python scripts/evaluate.py --model runs/A/seed_0/ppo_final.zip --episodes 100
+uv run python scripts/visualize_policy.py --model runs/A/seed_0/best_model.zip          # GIF junto al modelo
+uv run python scripts/visualize_policy.py --model runs/A/seed_0/best_model.zip --show   # ventana en vivo
 ```
 Resultado con el simulador anterior (v_max=2 m/s, vehiculo puntual, sin
 retardo de marcha; ID, determinista, 100 eps): `success_rate=1.0`,

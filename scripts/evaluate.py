@@ -18,8 +18,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import headland_rl  # noqa: F401
-from headland_rl.envs.headland_env import HeadlandTurnEnv
-from headland_rl.envs.params import CropParams, VehicleParams
+from headland_rl.config import build_env, load_config
 
 
 def main() -> None:
@@ -27,7 +26,9 @@ def main() -> None:
     ap.add_argument("--model", required=True)
     ap.add_argument("--episodes", type=int, default=100)
     ap.add_argument("--seed", type=int, default=1000)
-    ap.add_argument("--dr-mode", default="fixed")
+    ap.add_argument("--config", default="configs/train_A.yaml",
+                    help="config de entrenamiento: mismo entorno que vio la politica")
+    ap.add_argument("--dr-mode", default=None, help="por defecto el de la config")
     ap.add_argument("--stochastic", action="store_true",
                     help="acciones estocasticas (por defecto: deterministicas)")
     ap.add_argument("--outdir", default=None)
@@ -36,7 +37,8 @@ def main() -> None:
     from stable_baselines3 import PPO
 
     model = PPO.load(args.model)
-    env = HeadlandTurnEnv(dr_mode=args.dr_mode)
+    overrides = {"dr_mode": args.dr_mode} if args.dr_mode else {}
+    env = build_env(load_config(args.config), **overrides)
     outdir = Path(args.outdir) if args.outdir else Path(args.model).parent
     outdir.mkdir(parents=True, exist_ok=True)
 
@@ -51,12 +53,13 @@ def main() -> None:
             path_len += float(np.hypot(obs[0] - prev_xy[0], obs[1] - prev_xy[1]))
             prev_xy = obs[0:2].astype(float)
             done = bool(term or trunc)
-        p = env.get_params()
+        p = env.unwrapped.get_params()
         rows.append({
             "ep": ep, "success": int(info["success"]),
             "collided": int(info["collided"]), "reason": info["collision_reason"],
             "dpos": info["dpos"], "dtheta_deg": info["dtheta_deg"],
             "steps": info["steps"], "path_len": path_len,
+            "gear_switches": info["gear_switches"],
             "min_row_dist": info["min_row_dist"],
             "n_lanes": p.crop.n_lanes, "row_spacing": p.crop.row_spacing,
             "headland_width": p.crop.headland_width, "L": p.vehicle.L,
@@ -71,7 +74,7 @@ def main() -> None:
     a = np.array
     succ = [r for r in rows if r["success"]]
     summary = {
-        "model": str(args.model), "dr_mode": args.dr_mode,
+        "model": str(args.model), "dr_mode": env.unwrapped.dr_mode.value,
         "episodes": args.episodes, "deterministic": not args.stochastic,
         "success_rate": float(np.mean([r["success"] for r in rows])),
         "collision_rate": float(np.mean([r["collided"] for r in rows])),

@@ -33,6 +33,13 @@ train = [
   "tensorboard>=2.0",
 ]
 
+[tool.uv]
+# Copiar en vez de hardlinks desde la cache de uv: en este equipo los
+# hardlinks fallaban (os error 396, "vinculos permanentes incompatibles").
+# El proyecto NO debe vivir en OneDrive: el antivirus cloud de la universidad
+# pone en cuarentena .py de paquetes dentro de .venv.
+link-mode = "copy"
+
 # torch CPU en Windows (evita la rueda CUDA de ~2GB que no se usara)
 [[tool.uv.index]]
 name = "pytorch-cpu"

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import math
+from functools import lru_cache
+
 import numpy as np
 
 from .params import EpisodeParams
@@ -81,6 +83,24 @@ def check_collision(x: float, y: float, params: EpisodeParams) -> tuple[bool, st
     return False, ""
 
 
+@lru_cache(maxsize=256)
+def _footprint_local(
+    L: float, front_overhang: float, rear_overhang: float, width: float, ds: float
+) -> np.ndarray:
+    """Perimetro de la huella en ejes del vehiculo (cacheado por geometria)."""
+    xr, xf = -rear_overhang, L + front_overhang
+    hw = width / 2.0
+    corners = np.array([[xr, -hw], [xf, -hw], [xf, hw], [xr, hw], [xr, -hw]])
+    pts = []
+    for a, b in zip(corners[:-1], corners[1:]):
+        n = max(int(math.ceil(np.hypot(*(b - a)) / ds)), 1)
+        t = np.arange(n)[:, None] / n
+        pts.append(a + t * (b - a))
+    local = np.vstack(pts)
+    local.flags.writeable = False
+    return local
+
+
 def footprint_points(
     x: float, y: float, th: float, params: EpisodeParams, ds: float = 0.05
 ) -> np.ndarray:
@@ -92,15 +112,7 @@ def footprint_points(
     `ds` debe ser menor que row_width para no saltarse una fila.
     """
     veh = params.vehicle
-    xr, xf = -veh.rear_overhang, veh.L + veh.front_overhang
-    hw = veh.width / 2.0
-    corners = np.array([[xr, -hw], [xf, -hw], [xf, hw], [xr, hw], [xr, -hw]])
-    pts = []
-    for a, b in zip(corners[:-1], corners[1:]):
-        n = max(int(math.ceil(np.hypot(*(b - a)) / ds)), 1)
-        t = np.arange(n)[:, None] / n
-        pts.append(a + t * (b - a))
-    local = np.vstack(pts)
+    local = _footprint_local(veh.L, veh.front_overhang, veh.rear_overhang, veh.width, ds)
     c, s = math.cos(th), math.sin(th)
     return np.column_stack([
         x + c * local[:, 0] - s * local[:, 1],
@@ -109,10 +121,14 @@ def footprint_points(
 
 
 def check_footprint_collision(
-    x: float, y: float, th: float, params: EpisodeParams
+    x: float, y: float, th: float, params: EpisodeParams, pts: np.ndarray | None = None
 ) -> tuple[bool, str]:
-    """Como `check_collision`, pero para toda la huella del vehiculo."""
-    pts = footprint_points(x, y, th, params)
+    """Como `check_collision`, pero para toda la huella del vehiculo.
+
+    `pts` permite reutilizar los puntos de `footprint_points` ya calculados.
+    """
+    if pts is None:
+        pts = footprint_points(x, y, th, params)
     crop = params.crop
     x_goal = crop.n_lanes * crop.row_spacing
     px, py = pts[:, 0], pts[:, 1]
@@ -130,10 +146,11 @@ def check_footprint_collision(
 
 
 def footprint_min_row_distance(
-    x: float, y: float, th: float, params: EpisodeParams
+    x: float, y: float, th: float, params: EpisodeParams, pts: np.ndarray | None = None
 ) -> float:
     """Holgura lateral minima de la huella a las filas (inf si no esta en cultivo)."""
-    pts = footprint_points(x, y, th, params)
+    if pts is None:
+        pts = footprint_points(x, y, th, params)
     in_crop = pts[:, 1] < 0.0
     if not in_crop.any():
         return math.inf

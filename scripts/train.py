@@ -13,36 +13,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-import yaml
-
-import numpy as np
-
 import headland_rl  # noqa: F401 (registra HeadlandTurn-v0 en Gymnasium)
-from headland_rl.envs.headland_env import HeadlandTurnEnv
-from headland_rl.envs.params import CropParams, VehicleParams
-
-
-def load_config(path: str) -> dict:
-    with open(path) as f:
-        return yaml.safe_load(f)
-
-
-def build_env(cfg: dict, seed: int) -> HeadlandTurnEnv:
-    ec = cfg.get("env", {})
-    ref = cfg.get("reference", None)
-    ref_poses = np.load(ref) if ref else None
-    return HeadlandTurnEnv(
-        dr_mode=cfg.get("dr_mode", "fixed"),
-        privileged=cfg.get("privileged", False),
-        dt=ec.get("dt", 0.05),
-        max_steps=ec.get("max_steps", 400),
-        pos_tol=ec.get("pos_tol", 0.30),
-        ang_tol_deg=ec.get("ang_tol_deg", 10.0),
-        fixed_vehicle=VehicleParams(**ec["fixed_vehicle"]) if ec.get("fixed_vehicle") else None,
-        fixed_crop=CropParams(**ec["fixed_crop"]) if ec.get("fixed_crop") else None,
-        reference_poses=ref_poses,
-        **{k: v for k, v in ec.get("reward", {}).items()},
-    )
+from headland_rl.config import build_env, load_config
 
 
 def main() -> None:
@@ -101,17 +73,20 @@ def main() -> None:
     ])
 
     pc = dict(cfg.get("ppo", {}))
-    net_arch = pc.pop("net_arch", [64, 64])
+    policy_kwargs = {"net_arch": pc.pop("net_arch", [64, 64])}
+    if "log_std_init" in pc:
+        policy_kwargs["log_std_init"] = pc.pop("log_std_init")
     model = PPO(
         "MlpPolicy",
         train_env,
         verbose=1,
         seed=args.seed,
         tensorboard_log=str(outdir / "tb"),
-        policy_kwargs={"net_arch": net_arch},
+        policy_kwargs=policy_kwargs,
         **pc,
     )
-    # Prior de avance (fase 4): la media inicial de v_cmd se situa en +0.5 m/s.
+    # Prior de avance (fase 4): la media inicial de v_cmd se desplaza +0.5
+    # (en m/s, o en unidades normalizadas si normalize_actions).
     # Sin esto, las colisiones tempranas empujan la media a v<0 (recortada a 0
     # por el espacio de accion) y la politica queda aparcada para siempre en
     # un optimo local del que PPO no escapa (gradiente nulo en el clip).
