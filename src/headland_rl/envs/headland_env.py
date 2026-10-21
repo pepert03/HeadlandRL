@@ -20,7 +20,6 @@ Se documenta en la fase 4 (definicion de recompensa) del plan.
 from __future__ import annotations
 
 import math
-from dataclasses import asdict
 from typing import Any
 
 import gymnasium as gym
@@ -156,6 +155,7 @@ class HeadlandTurnEnv(gym.Env):
             self._ref_dir = np.append(d, d[-1]).astype(int)
             self._ref_ds = float(np.mean(np.hypot(step[:, 0], step[:, 1])))
         self._ref_idx = 0
+        self._at_frontier = True
         self.render_mode = render_mode
 
         # Espacio de accion FIJO (para que SB3 no cambie entre episodios DR):
@@ -236,9 +236,13 @@ class HeadlandTurnEnv(gym.Env):
         self._goal = goal_pose(self.params)
         self._ref_idx = 0
         self._gear = 1
+        # el episodio arranca en la frontera del backplay (u == u_min)? Lo usa
+        # el curriculum adaptativo para medir el exito solo donde esta aprendiendo
+        self._at_frontier = not self._curr_on
         if self._curr_on:
             if self._rng.random() < self._frontier_p:
                 u = self._u_min
+                self._at_frontier = True
             else:
                 u = float(self._rng.uniform(self._u_min, self._u_max))
             if u > 1e-6:
@@ -255,7 +259,9 @@ class HeadlandTurnEnv(gym.Env):
         self._min_row_dist = math.inf
 
         obs = self._get_obs()
-        info = {"params": asdict(self.params.vehicle) | asdict(self.params.crop)}
+        # vars() y no asdict(): los campos son escalares y asdict copia en
+        # profundidad en cada reset (caro con los episodios de 1 paso del backplay)
+        info = {"params": vars(self.params.vehicle) | vars(self.params.crop)}
         return obs, info
 
     def step(self, action: np.ndarray):
@@ -367,6 +373,7 @@ class HeadlandTurnEnv(gym.Env):
             "rev_steps": self._rev_steps,
             "gear_switches": self._n_switches,
             "ref_idx": self._ref_idx,
+            "at_frontier": self._at_frontier,
         }
         if self.render_mode == "human":
             self.render()
@@ -442,21 +449,28 @@ class HeadlandTurnEnv(gym.Env):
     def get_params(self) -> EpisodeParams:
         return self.params
 
-    def set_curriculum(self, frac: float) -> None:
-        """Endurece tolerancias, tope de velocidad y tiempo de cambio de marcha (fase 4).
+    def set_curriculum(self, frac: float, frac_phys: float | None = None) -> None:
+        """Curriculum de entrenamiento (fase 4): backplay + condiciones fisicas.
 
-        frac=0 -> (curr_pos_0, curr_ang_0, speed_0); frac>=1 -> valores
-        estrictas. Se llama desde el callback de entrenamiento sobre el
-        entorno de rollout; la evaluacion siempre usa los valores estrictos.
+        `frac` mueve la frontera del backplay (u_min = 1 - frac). `frac_phys`
+        endurece tolerancias, tope de velocidad y tiempo de cambio de marcha
+        (0 -> curr_pos_0/curr_ang_0/speed_0/marcha instantanea, 1 -> valores
+        reales); por defecto va ligado a `frac`. Con 1.0 se entrena siempre en
+        las condiciones de la evaluacion: si se acoplan y el backplay se
+        estanca, la fisica nunca llega a la real y lo aprendido no transfiere.
+        Se llama desde el callback sobre el entorno de rollout; la evaluacion
+        siempre usa los valores estrictos.
         """
         f = float(min(max(frac, 0.0), 1.0))
+        fp = f if frac_phys is None else float(min(max(frac_phys, 0.0), 1.0))
+        self._curr_on = True
+        self._u_min = 1.0 - f
+        self._u_max = 1.0
+        f = fp
         self._cur_pos = self._pos_tol_strict + (self._curr_pos_0 - self._pos_tol_strict) * (1.0 - f)
         self._cur_ang = self._ang_tol_strict + (self._curr_ang_0 - self._ang_tol_strict) * (1.0 - f)
         self._v_cap = self._speed_0 + (self._speed_1 - self._speed_0) * f
         self._gear_scale = f
-        self._curr_on = True
-        self._u_min = 1.0 - f
-        self._u_max = 1.0
 
     def _backplay_pose(self, s0_nominal: np.ndarray, u: float) -> np.ndarray:
         """Pose de spawn a fraccion `u` del arco de la referencia.
@@ -466,7 +480,7 @@ class HeadlandTurnEnv(gym.Env):
         hasta una pose libre (huella completa).
         """
         if self._ref_override is not None:
-            poses = [tuple(p) for p in self._ref_override]
+            poses = self._ref_override
         else:
             gx, gy, gth = self._goal
             poses = dubins_reference_poses(

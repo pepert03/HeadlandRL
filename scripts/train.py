@@ -22,14 +22,19 @@ def main() -> None:
     ap.add_argument("--config", default="configs/train_A.yaml")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--timesteps", type=int, default=None)
+    ap.add_argument("--n-envs", type=int, default=None, help="pisa n_envs de la config")
+    ap.add_argument("--vec-env", choices=["dummy", "subproc"], default=None,
+                    help="pisa vec_env de la config")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
     total = args.timesteps or int(cfg.get("total_timesteps", 300_000))
-    n_envs = int(cfg.get("n_envs", 4))
+    n_envs = args.n_envs or int(cfg.get("n_envs", 4))
+    vec_env = args.vec_env or cfg.get("vec_env", "dummy")
     outdir = Path("runs") / str(cfg.get("condition", "A")) / f"seed_{args.seed}"
     (outdir / "tb").mkdir(parents=True, exist_ok=True)
 
+    import torch
     from stable_baselines3 import PPO
     from stable_baselines3.common.callbacks import (
         BaseCallback,
@@ -37,25 +42,62 @@ def main() -> None:
         EvalCallback,
     )
     from stable_baselines3.common.monitor import Monitor
-    from stable_baselines3.common.vec_env import DummyVecEnv
+    from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
+
+    # Una MLP de 64x64 va mas rapida con 1 hilo: con varios, el reparto entre
+    # hilos cuesta mas que el calculo y compite con los procesos de SubprocVecEnv
+    torch.set_num_threads(int(cfg.get("torch_threads", 1)))
 
     class CurriculumCallback(BaseCallback):
-        """Endurece pos_tol/ang_tol del env de rollout de 0 a `curr_steps`.
+        """Curriculum del entorno de rollout (tolerancias, velocidad, marcha, backplay).
 
         Solo toca el entorno de entrenamiento; la evaluacion (EvalCallback)
-        usa siempre las tolerancias estrictas, que son la metrica real.
+        usa siempre los valores estrictos, que son la metrica real. Se
+        actualiza una vez por rollout (no por paso): con SubprocVecEnv cada
+        llamada es un viaje de ida y vuelta a todos los procesos.
+
+        mode=linear: frac = pasos / steps (avanza aprenda o no).
+        mode=adaptive: frac sube `step` solo cuando el exito de los episodios
+        que arrancan en la frontera del backplay supera `threshold` (con al
+        menos `min_episodes`); si no, la politica sigue practicando ese tramo.
+        `phys_frac` fija las condiciones fisicas (tolerancias, velocidad, marcha);
+        en adaptive por defecto 1.0 = las reales, para que lo aprendido en cada
+        tramo valga tal cual en la evaluacion. En linear siguen a frac.
         """
 
-        def __init__(self, curr_steps: int, verbose: int = 0):
+        def __init__(self, cc: dict, verbose: int = 0):
             super().__init__(verbose)
-            self.curr_steps = max(int(curr_steps), 1)
+            self.mode = cc.get("mode", "linear")
+            self.steps = max(int(cc.get("steps", 300_000)), 1)
+            self.step = float(cc.get("step", 0.025))
+            self.threshold = float(cc.get("threshold", 0.6))
+            self.min_episodes = int(cc.get("min_episodes", 100))
+            self.phys_frac = cc.get("phys_frac", 1.0 if self.mode == "adaptive" else None)
+            self.frac, self.n, self.ok = 0.0, 0, 0
+
+        def _on_rollout_start(self) -> None:
+            if self.mode == "linear":
+                self.frac = self.num_timesteps / self.steps
+            elif self.n >= self.min_episodes:
+                rate = self.ok / self.n
+                self.logger.record("curriculum/frontier_success", rate)
+                if rate >= self.threshold:
+                    self.frac = min(1.0, self.frac + self.step)
+                self.n, self.ok = 0, 0
+            self.logger.record("curriculum/frac", self.frac)
+            self.training_env.env_method("set_curriculum", self.frac, self.phys_frac)
 
         def _on_step(self) -> bool:
-            frac = self.num_timesteps / self.curr_steps
-            self.training_env.env_method("set_curriculum", frac)
+            if self.mode == "adaptive":
+                for done, info in zip(self.locals["dones"], self.locals["infos"]):
+                    if done and info.get("at_frontier"):
+                        self.n += 1
+                        self.ok += int(info.get("success", False))
             return True
 
-    train_env = DummyVecEnv(
+    # subproc: un proceso por entorno (usa varios nucleos); dummy: todos en este proceso
+    vec_cls = SubprocVecEnv if vec_env == "subproc" else DummyVecEnv
+    train_env = vec_cls(
         [lambda r=r: Monitor(build_env(cfg, args.seed + 1000 + r)) for r in range(n_envs)]
     )
     eval_env = DummyVecEnv([lambda: Monitor(build_env(cfg, 10_000 + args.seed))])
@@ -68,7 +110,7 @@ def main() -> None:
         deterministic=True,
     )
     callbacks = CallbackList([
-        CurriculumCallback(int(cfg.get("curriculum_steps", 300_000))),
+        CurriculumCallback(cfg.get("curriculum", {"steps": cfg.get("curriculum_steps", 300_000)})),
         eval_cb,
     ])
 
@@ -90,12 +132,10 @@ def main() -> None:
     # Sin esto, las colisiones tempranas empujan la media a v<0 (recortada a 0
     # por el espacio de accion) y la politica queda aparcada para siempre en
     # un optimo local del que PPO no escapa (gradiente nulo en el clip).
-    import torch
-
     with torch.no_grad():
         model.policy.action_net.bias[0] += 0.5
     print(f"[train] condicion={cfg.get('condition')} dr_mode={cfg.get('dr_mode')} "
-          f"seed={args.seed} timesteps={total} -> {outdir}")
+          f"seed={args.seed} timesteps={total} n_envs={n_envs} vec_env={vec_env} -> {outdir}")
     model.learn(total_timesteps=total, callback=callbacks)
     model.save(str(outdir / "ppo_final"))
     train_env.close()

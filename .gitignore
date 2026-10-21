@@ -22,3 +22,9 @@ wandb/
 *.synctex.gz
 *.out
 *.toc
+
+# Documentos del TFM (propuesta, anexo, documentos de la tutora): no se publican
+/report/
+# PDFs e imagenes sueltos en la raiz (articulos, guias)
+/*.pdf
+/*.jpg

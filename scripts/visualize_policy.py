@@ -67,7 +67,7 @@ def _style_series(ax) -> None:
     ax.tick_params(colors="#555", labelsize=8)
 
 
-def make_figure(rec: dict, dt: float, title: str):
+def make_figure(rec: dict, dt: float, title: str, scene_only: bool = False):
     import matplotlib.pyplot as plt
     from matplotlib.gridspec import GridSpec
 
@@ -75,14 +75,21 @@ def make_figure(rec: dict, dt: float, title: str):
     veh = p.vehicle
     t = np.arange(len(rec["state"])) * dt
     st, cmd = rec["state"], rec["cmd"]
-    red, grey = PALETTE["path"], "#9a9a9a"
+    red = PALETTE["path"]
 
-    fig = plt.figure(figsize=(10.5, 6.6), facecolor="white")
-    gs = GridSpec(3, 2, width_ratios=[1.0, 1.15], figure=fig, hspace=0.5, wspace=0.08,
-                  left=0.01, right=0.97, top=0.9, bottom=0.08)
-    ax = fig.add_subplot(gs[:, 0])
-    ax_v, ax_d, ax_g = (fig.add_subplot(gs[i, 1]) for i in range(3))
-    fig.suptitle(title, fontsize=10, color="#333")
+    if scene_only:  # solo la escena, ajustada a su proporcion (p.ej. para el README)
+        crop = p.crop
+        w = float(goal[0]) + 2 * crop.x_margin + 0.3
+        h = crop.headland_width + crop.y_margin_top + crop.crop_depth + 0.3
+        fig = plt.figure(figsize=(4.2, 4.2 * h / w), facecolor="white")
+        ax = fig.add_axes((0, 0, 1, 1))
+    else:
+        fig = plt.figure(figsize=(10.5, 6.6), facecolor="white")
+        gs = GridSpec(3, 2, width_ratios=[1.0, 1.15], figure=fig, hspace=0.5, wspace=0.08,
+                      left=0.01, right=0.97, top=0.86, bottom=0.08)
+        ax = fig.add_subplot(gs[:, 0])
+        ax_v, ax_d, ax_g = (fig.add_subplot(gs[i, 1]) for i in range(3))
+        fig.suptitle(title, fontsize=10, color="#333")
 
     # --- escena
     draw_scene(ax, p, float(goal[0]))
@@ -99,28 +106,12 @@ def make_figure(rec: dict, dt: float, title: str):
                      family="monospace", color="#222", zorder=20,
                      bbox=dict(boxstyle="round,pad=0.4", fc="white", ec="#888", alpha=0.9))
 
-    # --- series temporales (completas, con un cursor que avanza)
-    for a in (ax_v, ax_d, ax_g):
-        _style_series(a)
-    ax_v.plot(t, cmd[:, 0], color=grey, lw=1, ls="--", label="orden")
-    ax_v.plot(t, st[:, 3], color=red, lw=1.8, label="real")
-    ax_v.axhline(0, color="#777", lw=0.6)
-    ax_v.set_title("velocidad [m/s]", fontsize=9, loc="left", color="#333")
-    ax_v.legend(loc="upper right", fontsize=7, frameon=False, ncol=2)
-    ax_d.plot(t, np.degrees(cmd[:, 1]), color=grey, lw=1, ls="--", label="orden")
-    ax_d.plot(t, np.degrees(st[:, 4]), color=red, lw=1.8, label="real")
-    for lim in (-veh.delta_max_deg, veh.delta_max_deg):
-        ax_d.axhline(lim, color=PALETTE["border"], lw=0.6, ls=":")
-    ax_d.set_title("direccion [deg]", fontsize=9, loc="left", color="#333")
-    ax_d.legend(loc="upper right", fontsize=7, frameon=False, ncol=2)
     gear = rec["gear"]
-    ax_g.fill_between(t, 0, gear, step="post", color=red, alpha=0.15, lw=0)
-    ax_g.step(t, gear, where="post", color=red, lw=1.4)
-    ax_g.set_yticks([-1, 1], ["atras", "adelante"])
-    ax_g.set_ylim(-1.4, 1.4)
-    ax_g.set_title("marcha", fontsize=9, loc="left", color="#333")
-    ax_g.set_xlabel("t [s]", fontsize=8, color="#555")
-    cursors = [a.axvline(0, color=PALETTE["border"], lw=1.0) for a in (ax_v, ax_d, ax_g)]
+    if scene_only:
+        status.set_fontsize(7)
+        cursors = []
+    else:
+        cursors = _draw_series(ax_v, ax_d, ax_g, t, st, cmd, gear, veh)
 
     fwd = st[:, 3] >= -0.01
     path_f, path_r = split_by_direction(st[:, :2], fwd)
@@ -144,6 +135,31 @@ def make_figure(rec: dict, dt: float, title: str):
     return fig, draw
 
 
+def _draw_series(ax_v, ax_d, ax_g, t, st, cmd, gear, veh) -> list:
+    """Series temporales completas; devuelve los cursores que avanzan con la animacion."""
+    red, grey = PALETTE["path"], "#9a9a9a"
+    for a in (ax_v, ax_d, ax_g):
+        _style_series(a)
+    ax_v.plot(t, cmd[:, 0], color=grey, lw=1, ls="--", label="orden")
+    ax_v.plot(t, st[:, 3], color=red, lw=1.8, label="real")
+    ax_v.axhline(0, color="#777", lw=0.6)
+    ax_v.set_title("velocidad [m/s]", fontsize=9, loc="left", color="#333")
+    ax_v.legend(loc="upper right", fontsize=7, frameon=False, ncol=2)
+    ax_d.plot(t, np.degrees(cmd[:, 1]), color=grey, lw=1, ls="--", label="orden")
+    ax_d.plot(t, np.degrees(st[:, 4]), color=red, lw=1.8, label="real")
+    for lim in (-veh.delta_max_deg, veh.delta_max_deg):
+        ax_d.axhline(lim, color=PALETTE["border"], lw=0.6, ls=":")
+    ax_d.set_title("direccion [deg]", fontsize=9, loc="left", color="#333")
+    ax_d.legend(loc="upper right", fontsize=7, frameon=False, ncol=2)
+    ax_g.fill_between(t, 0, gear, step="post", color=red, alpha=0.15, lw=0)
+    ax_g.step(t, gear, where="post", color=red, lw=1.4)
+    ax_g.set_yticks([-1, 1], ["atras", "adelante"])
+    ax_g.set_ylim(-1.4, 1.4)
+    ax_g.set_title("marcha", fontsize=9, loc="left", color="#333")
+    ax_g.set_xlabel("t [s]", fontsize=8, color="#555")
+    return [a.axvline(0, color=PALETTE["border"], lw=1.0) for a in (ax_v, ax_d, ax_g)]
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True, help="ruta .zip de SB3, o 'random'")
@@ -156,6 +172,8 @@ def main() -> None:
     ap.add_argument("--speed", type=float, default=1.0, help="factor sobre tiempo real")
     ap.add_argument("--show", action="store_true", help="ventana en vivo en vez de fichero")
     ap.add_argument("--out", default=None, help=".gif o .mp4 (mp4 necesita ffmpeg)")
+    ap.add_argument("--scene-only", action="store_true", help="solo la escena, sin graficas")
+    ap.add_argument("--dpi", type=int, default=100)
     args = ap.parse_args()
 
     if not args.show:
@@ -188,7 +206,7 @@ def main() -> None:
         print(f"ep={ep} {outcome_text(info)} pasos={info['steps']} dpos={info['dpos']:.2f}m "
               f"dtheta={info['dtheta_deg']:.1f}deg cambios_marcha={info['gear_switches']}")
 
-        fig, draw = make_figure(rec, base.dt, title)
+        fig, draw = make_figure(rec, base.dt, title, scene_only=args.scene_only)
         frames = list(range(0, len(rec["state"]), args.every))
         if frames[-1] != len(rec["state"]) - 1:
             frames.append(len(rec["state"]) - 1)
@@ -204,9 +222,9 @@ def main() -> None:
         out.parent.mkdir(parents=True, exist_ok=True)
         fps = max(1, round(1000 / interval))
         if out.suffix == ".gif":
-            anim.save(str(out), writer=PillowWriter(fps=fps))
+            anim.save(str(out), writer=PillowWriter(fps=fps), dpi=args.dpi)
         else:
-            anim.save(str(out), writer="ffmpeg", fps=fps)
+            anim.save(str(out), writer="ffmpeg", fps=fps, dpi=args.dpi)
         plt.close(fig)
         print(f"  -> {out}")
 

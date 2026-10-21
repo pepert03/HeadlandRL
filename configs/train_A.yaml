@@ -4,8 +4,12 @@ condition: A
 dr_mode: fixed
 privileged: false
 n_envs: 8
+vec_env: subproc  # un proceso por entorno (dummy: todos en el proceso principal)
 total_timesteps: 3000000
-curriculum_steps: 2000000
+# Curriculum adaptativo: la frontera del backplay solo retrocede cuando el
+# exito desde ella supera threshold. Con el lineal (2M pasos) el tramo marcha
+# atras solo estaba ~400k pasos en la frontera y la politica no lo aprendia.
+curriculum: {mode: adaptive, step: 0.025, threshold: 0.6, min_episodes: 100}
 eval_freq: 10000
 n_eval_episodes: 10
 # la politica actua en [-1,1]^2 (wrapper NormalizedActions en build_env)
@@ -17,8 +21,8 @@ env:
   pos_tol: 0.30
   ang_tol_deg: 10.0
   # curriculum (callback): tolerancias 2.0m/90deg -> estrictas y
-  # velocidad 0.4 -> 0.83 m/s y tiempo de cambio de marcha 0 -> 1 s durante
-  # los primeros curriculum_steps
+  # velocidad 0.4 -> 0.83 m/s y tiempo de cambio de marcha 0 -> 1 s, al
+  # ritmo del curriculum
   fixed_vehicle: {L: 1.69, delta_max_deg: 26.0, tau_v: 0.3, tau_delta: 0.5, v_max: 0.83}
   fixed_crop: {row_spacing: 2.5, headland_width: 6.0, n_lanes: 1, row_width: 0.5, crop_depth: 5.0, x_margin: 2.0, y_margin_top: 1.0}
   # progreso a lo largo de la referencia (w_ref_progress) en vez del euclideo,
