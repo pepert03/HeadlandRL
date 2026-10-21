@@ -1,175 +1,175 @@
 # HeadlandRL
 
-**Aprendizaje por refuerzo para el cambio de calle (_headland turn_) de un vehículo agrícola en viñedo**, con aleatorización de dominio geométrica y dinámica y una extensión de adaptación en línea.
+**Reinforcement learning for headland turns of an agricultural vehicle in a vineyard**, with geometric and dynamics domain randomization and an online-adaptation extension.
 
-Trabajo de Fin de Máster. El vehículo de referencia es el Renault Twizy automatizado por el Centro de Automática y Robótica (CSIC-UPM) para inspeccionar viñedos.
+Master's thesis project. The reference vehicle is the Renault Twizy that the Centre for Automation and Robotics (CSIC-UPM) automated for vineyard inspection.
 
 <p align="center">
-  <img src="docs/media/paso_A_escena.gif" alt="Política PPO del paso A ejecutando un cambio de calle en tres tramos" width="300">
+  <img src="docs/media/paso_A_escena.gif" alt="Step A PPO policy performing a three-segment headland turn" width="300">
 </p>
 
-<p align="center"><sub>Política PPO del paso A: sale de la calle, maniobra en la cabecera en tres tramos (adelante, atrás, adelante) y entra en la calle siguiente. Línea continua, hacia delante; discontinua, marcha atrás. Reproducido a doble velocidad.</sub></p>
+<p align="center"><sub>Step A PPO policy: it leaves the row, manoeuvres in the headland in three segments (forward, reverse, forward) and enters the next row. Solid line: forward; dashed line: reverse. Played at 2× speed.</sub></p>
 
 ---
 
-## El problema
+## The problem
 
-Al final de cada hilera, el vehículo tiene que salir de la calle, maniobrar en la cabecera y entrar en la siguiente sin tocar las cepas. La solución clásica (curvas de Dubins y Pure Pursuit) supone un modelo del vehículo que puede no coincidir con el real. Una política aprendida por RL puede adaptarse mejor, pero corre el riesgo de no generalizar a viñedos o vehículos distintos de los que vio al entrenar.
+At the end of each row the vehicle has to leave the alley, manoeuvre in the headland and enter the next alley without touching the vines. The classical solution (Dubins curves plus Pure Pursuit) assumes a vehicle model that may not match the real one. A policy learned with RL can adapt better, but risks not generalizing to vineyards or vehicles it did not see during training.
 
-El estudio mide de forma sistemática **cómo afecta la aleatorización de la geometría del cultivo y de la dinámica del vehículo a esa generalización**, y si una política que **infiere el dominio a partir de su historial** recupera parte de lo que se pierde al no conocerlo.
+The study systematically measures **how randomizing the crop geometry and the vehicle dynamics affects that generalization**, and whether a policy that **infers the domain from its recent history** recovers part of what is lost by not knowing it.
 
-## Resultado actual: paso A
+## Current result: step A
 
 <p align="center">
-  <img src="docs/media/paso_A.gif" alt="Escena y series temporales de velocidad, dirección y marcha durante la maniobra" width="760">
+  <img src="docs/media/paso_A.gif" alt="Scene and time series of speed, steering and gear during the manoeuvre" width="760">
 </p>
 
-| Métrica | Valor |
+| Metric | Value |
 |---|---|
-| Tasa de éxito, acciones deterministas | **20/20** |
-| Tasa de éxito, acciones estocásticas | **50/50** |
-| Error final de posición / orientación | 0,27 m / 3,1° (tolerancia 0,30 m / 10°) |
-| Duración y recorrido | 21,5 s, 11,2 m |
-| Cambios de marcha | 2 (maniobra de tres tramos) |
-| Entrenamiento | PPO, 3 M pasos, ~15 min en CPU con 8 procesos |
+| Success rate, deterministic actions | **20/20** |
+| Success rate, stochastic actions | **50/50** |
+| Final position / heading error | 0.27 m / 3.1° (tolerance 0.30 m / 10°) |
+| Duration and path length | 21.5 s, 11.2 m |
+| Gear changes | 2 (three-segment manoeuvre) |
+| Training | PPO, 3 M steps, ~15 min on CPU with 8 processes |
 
-Escenario nominal: Twizy con batalla de 1,69 m y dirección máxima de 26° (radio mínimo de 3,47 m), cabecera de 6 m y calle de destino adyacente a 2,5 m. Con la huella real del vehículo **no existe maniobra solo hacia delante**, así que la política tiene que usar la marcha atrás.
+Nominal scenario: Twizy with a 1.69 m wheelbase and 26° maximum steering (3.47 m minimum turning radius), a 6 m headland and an adjacent target row 2.5 m away. With the vehicle's real footprint **there is no forward-only manoeuvre**, so the policy has to use reverse.
 
-> El paso A es la **referencia inferior** del estudio: la política solo ha visto este escenario. Falta evaluarla en los regímenes fuera de distribución, que es lo que la convierte en referencia.
+> Step A is the study's **lower baseline**: the policy has only ever seen this scenario. What makes it a baseline is evaluating it in the out-of-distribution regimes, which is still to be done.
 
-## Cómo funciona
+## How it works
 
-### Modelo del vehículo
+### Vehicle model
 
-Modelo bicicleta con actuación de primer orden, como en la propuesta:
+Kinematic bicycle model with first-order actuation, as in the proposal:
 
 $$
 \dot{x} = v\cos\theta,\quad \dot{y} = v\sin\theta,\quad \dot{\theta} = \frac{v}{L}\tan\delta,\quad
 \dot{v} = \frac{v_{cmd}-v}{\tau_v},\quad \dot{\delta} = \frac{\delta_{cmd}-\delta}{\tau_\delta}
 $$
 
-Ajustes al vehículo real (Bengochea-Guevara et al., 2025):
+Adjustments to the real vehicle (Bengochea-Guevara et al., 2025):
 
-- **Velocidad** de hasta 0,83 m/s (3 km/h, la de operación en viñedo) y marcha atrás de hasta 0,5 m/s.
-- **Huella** rectangular de 2,32 × 1,23 m: las colisiones se comprueban con todo el vehículo, no con un punto.
-- **Cambio de marcha**: para invertir el sentido el vehículo frena hasta parar y espera 1 s, porque en el Twizy la marcha se cambia por CAN emulando los botones.
+- **Speed** up to 0.83 m/s (3 km/h, the operating speed in the vineyard) and up to 0.5 m/s in reverse.
+- **Footprint** of 2.32 × 1.23 m: collisions are checked against the whole vehicle, not a point.
+- **Gear changes**: to reverse direction the vehicle brakes to a stop and waits 1 s, because the Twizy's gear is changed over CAN by emulating its buttons.
 
-La política actúa a 10 Hz. Observa la pose, la velocidad, la dirección, el error respecto al objetivo y la marcha engranada, y decide la orden de velocidad y de dirección.
+The policy acts at 10 Hz. It observes the pose, speed, steering angle, error to the goal and engaged gear, and outputs speed and steering commands.
 
-### Condiciones experimentales
+### Experimental conditions
 
 <p align="center">
-  <img src="docs/media/escenarios_dr.png" alt="Cuatro escenarios aleatorizados con distinta cabecera, separación entre calles y vehículo" width="820">
+  <img src="docs/media/escenarios_dr.png" alt="Four randomized scenarios with different headland, row spacing and vehicle" width="820">
 </p>
 
-<p align="center"><sub>Escenarios de la condición D: cambian la cabecera, la separación y la distancia a la calle de destino, y la batalla y la dirección máxima del vehículo.</sub></p>
+<p align="center"><sub>Condition D scenarios: headland width, row spacing, distance to the target row, and the vehicle's wheelbase and maximum steering all vary.</sub></p>
 
-| Paso | Durante el entrenamiento varía… | Papel | Estado |
+| Step | What varies during training | Role | Status |
 |---|---|---|---|
-| **A** | Nada (escenario nominal) | Referencia inferior | ✅ entrena; falta la evaluación OOD |
-| **B** | Geometría del cultivo | Aísla la incertidumbre geométrica | ⏳ |
-| **C** | Dinámica del vehículo (L, δmax, τv, τδ) | Aísla la incertidumbre dinámica | ⏳ |
-| **D** | Ambas | Condición realista; análisis de interacción | ⏳ |
-| **E** | Ambas, y la política recibe los parámetros reales | Oráculo (referencia superior) | ⏳ |
-| **F** | Ambas, y la política los infiere del historial | Adaptación en línea (extensión) | ⏳ |
+| **A** | Nothing (nominal scenario) | Lower baseline | ✅ trains; OOD evaluation pending |
+| **B** | Crop geometry | Isolates geometric uncertainty | ⏳ |
+| **C** | Vehicle dynamics (L, δmax, τv, τδ) | Isolates dynamics uncertainty | ⏳ |
+| **D** | Both | Realistic condition; interaction analysis | ⏳ |
+| **E** | Both, and the policy receives the true parameters | Oracle (upper baseline) | ⏳ |
+| **F** | Both, and the policy infers them from its history | Online adaptation (extension) | ⏳ |
 
-Todas se compararán con un método clásico sin aprendizaje en cinco regímenes de evaluación: dentro de distribución, fuera de distribución en geometría, en dinámica y en ambas, y frontera de factibilidad.
+All of them will be compared with a classical, non-learning method in five evaluation regimes: in-distribution, out-of-distribution in geometry, in dynamics and in both, and the feasibility boundary.
 
-### Cómo aprende la maniobra
+### How the manoeuvre is learned
 
-Explorando al azar, el vehículo choca siempre y nunca descubre una maniobra de tres tramos con cambios de marcha. Lo que la hace aprendible:
+With random exploration the vehicle always crashes and never discovers a three-segment manoeuvre with gear changes. What makes it learnable:
 
-1. **Referencia experta.** Un planificador Hybrid A* con la huella real calcula una maniobra válida (`scripts/plan_reference.py`).
-2. **Backplay con currículo adaptativo.** Al principio el vehículo aparece cerca del final de la referencia, y el punto de aparición retrocede **solo cuando la política acierta desde ahí el 60 % de las veces**. Con un ritmo fijo, el tramo marcha atrás pasaba sin aprenderse.
-3. **Condiciones reales desde el primer paso.** La velocidad, la tolerancia de llegada y el tiempo de cambio de marcha no se suavizan durante el entrenamiento. Cuando se suavizaban, la política aprendía unas condiciones que no eran las de la evaluación.
-4. **Recompensa de progreso a lo largo de la referencia.** La distancia euclídea al objetivo castiga el tramo marcha atrás, que aleja. El avance solo cuenta en el sentido de marcha del tramo, y cada cambio de marcha se penaliza, para que oscilar adelante y atrás no sea rentable.
-5. **Exploración compatible con el cambio de marcha.** Acciones normalizadas, ruido inicial pequeño y correlacionado en el tiempo (gSDE). Con el ruido por defecto, la orden cambiaba de signo casi en cada paso y la política acababa parada.
+1. **Expert reference.** A Hybrid A* planner that accounts for the real footprint computes a valid manoeuvre (`scripts/plan_reference.py`).
+2. **Backplay with an adaptive curriculum.** The vehicle first spawns near the end of the reference, and the spawn point moves back **only once the policy succeeds from there 60% of the time**. With a fixed schedule, the reverse segment went by without being learned.
+3. **Real conditions from the first step.** Speed, goal tolerance and gear-change time are not relaxed during training. When they were, the policy learned conditions that did not match the evaluation.
+4. **Progress-along-the-reference reward.** Euclidean distance to the goal penalizes the reverse segment, which moves away from it. Progress only counts in the segment's direction of travel, and every gear change is penalized, so oscillating back and forth does not pay off.
+5. **Exploration compatible with gear changes.** Normalized actions and small, time-correlated initial noise (gSDE). With the default noise, the command flipped sign almost every step and the policy ended up standing still.
 
-## Uso
+## Usage
 
-Requiere [uv](https://docs.astral.sh/uv/). **No pongas el proyecto en OneDrive**: el antivirus en la nube de la universidad pone en cuarentena archivos de paquetes dentro de `.venv`.
+Requires [uv](https://docs.astral.sh/uv/). **Do not put the project in OneDrive**: the university's cloud antivirus quarantines package files inside `.venv`.
 
 ```bash
 uv sync --group dev --group train
 uv run pytest tests/ -q
 ```
 
-Paso A:
+Step A:
 
 ```bash
-uv run python scripts/plan_reference.py      # solo si falta data/references/reference_A.npy (~1 min)
+uv run python scripts/plan_reference.py      # only if data/references/reference_A.npy is missing (~1 min)
 uv run python scripts/train.py --config configs/train_A.yaml --seed 0
 uv run python scripts/evaluate.py --model runs/A/seed_0/best_model.zip --episodes 20
 ```
 
-Visualización:
+Visualization:
 
 ```bash
-uv run python scripts/visualize_policy.py --model runs/A/seed_0/best_model.zip          # GIF junto al modelo
-uv run python scripts/visualize_policy.py --model runs/A/seed_0/best_model.zip --show   # ventana en vivo
-uv run python scripts/visualize_policy.py --model random --dr-mode joint --episodes 3   # política aleatoria
+uv run python scripts/visualize_policy.py --model runs/A/seed_0/best_model.zip          # GIF next to the model
+uv run python scripts/visualize_policy.py --model runs/A/seed_0/best_model.zip --show   # live window
+uv run python scripts/visualize_policy.py --model random --dr-mode joint --episodes 3   # random policy
 ```
 
-Opciones útiles: `--scene-only` (solo la escena), `--every 2 --speed 2` (más ligero y rápido), `--out demo.mp4` (requiere ffmpeg).
+Useful options: `--scene-only` (scene only), `--every 2 --speed 2` (lighter and faster), `--out demo.mp4` (requires ffmpeg).
 
-## Estructura
+## Layout
 
 ```
 configs/
-  env_default.yaml         # rangos de la propuesta y decisiones de implementación
-  train_A.yaml             # paso A: PPO, currículo, recompensa
-data/references/           # referencias expertas para el backplay
-docs/media/                # GIF e imágenes de este README
+  env_default.yaml         # ranges from the proposal and implementation decisions
+  train_A.yaml             # step A: PPO, curriculum, reward
+data/references/           # expert references for backplay
+docs/media/                # GIFs and images for this README
 src/headland_rl/
-  config.py                # build_env(cfg): el mismo entorno en entrenamiento, evaluación y visualización
-  viz.py                   # dibujo vectorial de la escena y del vehículo
+  config.py                # build_env(cfg): the same environment for training, evaluation and visualization
+  viz.py                   # vector drawing of the scene and the vehicle
   envs/
-    headland_env.py        # HeadlandTurnEnv (Gymnasium): dinámica, recompensa, currículo
-    wrappers.py            # acciones normalizadas a [-1, 1]
+    headland_env.py        # HeadlandTurnEnv (Gymnasium): dynamics, reward, curriculum
+    wrappers.py            # actions normalized to [-1, 1]
     params.py              # VehicleParams / CropParams / DomainRanges
-    randomization.py       # modos de aleatorización A-D y regímenes de evaluación
-    geometry.py            # poses, colisiones con la huella, factibilidad
-    dubins.py              # caminos de Dubins
-  classical/pure_pursuit.py  # método clásico Dubins + Pure Pursuit
+    randomization.py       # randomization modes A-D and evaluation regimes
+    geometry.py            # poses, footprint collisions, feasibility
+    dubins.py              # Dubins paths
+  classical/pure_pursuit.py  # classical Dubins + Pure Pursuit method
 scripts/
-  train.py                 # PPO (SB3) con currículo adaptativo y SubprocVecEnv
-  evaluate.py              # métricas principales -> CSV + JSON
-  plan_reference.py        # Hybrid A* con la huella del vehículo
-  visualize_policy.py      # animación (GIF/MP4/ventana)
-  diag/                    # sondas y comprobaciones puntuales
+  train.py                 # PPO (SB3) with adaptive curriculum and SubprocVecEnv
+  evaluate.py              # main metrics -> CSV + JSON
+  plan_reference.py        # Hybrid A* with the vehicle footprint
+  visualize_policy.py      # animation (GIF/MP4/window)
+  diag/                    # one-off probes and checks
 tests/
-report/                    # propuesta del TFM (local, no versionado)
-runs/                      # salidas de entrenamiento (no versionado)
+report/                    # thesis proposal (local only, not versioned)
+runs/                      # training outputs (not versioned)
 ```
 
-## Hoja de ruta
+## Roadmap
 
-- [x] Entorno parametrizable con los modos A–D y la observación privilegiada E
-- [x] Simulador ajustado al Twizy: velocidad, huella y cambio de marcha
-- [x] Paso A: PPO resuelve el escenario nominal
-- [ ] Evaluación por regímenes (ID, OOD geométrico, dinámico y conjunto, frontera de factibilidad)
-- [ ] Referencia de backplay para cada episodio (Hybrid A* o Reeds–Shepp), necesaria para B–F
-- [ ] Método clásico con marcha atrás (planificador + seguidor); el actual solo avanza
-- [ ] Pasos B–E con varias semillas y pruebas estadísticas
-- [ ] Paso F: política con memoria y codificador estilo RMA
-- [ ] Conducción más suave (ahora la dirección va al tope y la velocidad a tirones) y despliegue en el Twizy (ROS + ONNX)
+- [x] Parameterized environment with modes A–D and privileged observation E
+- [x] Simulator tuned to the Twizy: speed, footprint and gear changes
+- [x] Step A: PPO solves the nominal scenario
+- [ ] Evaluation by regime (ID, geometric, dynamics and joint OOD, feasibility boundary)
+- [ ] Per-episode backplay reference (Hybrid A* or Reeds–Shepp), needed for B–F
+- [ ] Classical baseline with reverse (planner + tracker); the current one only drives forward
+- [ ] Steps B–E with several seeds and statistical tests
+- [ ] Step F: memory-based policy and RMA-style encoder
+- [ ] Smoother driving (steering currently goes to full lock and speed is jerky) and deployment on the Twizy (ROS + ONNX)
 
-## Decisiones de implementación
+## Implementation decisions
 
-No están en la propuesta y están marcadas en el código:
+Not specified in the proposal; marked in the code:
 
-- `v_rev_max = 0,5 m/s`, `gear_switch_time = 1 s`, voladizos de 0,315 m delante y detrás.
-- `row_width = 0,5 m`, `crop_depth = 5 m` y márgenes de la zona válida.
-- Ruido en la pose inicial `(0,15 m, 0,15 m, 5°)`, solo cuando se aleatoriza la geometría.
-- Paso A: `dt = 0,1 s`, `max_steps = 500` (50 s) y tolerancias de éxito de 0,30 m y 10°. Los valores por defecto del entorno son `dt = 0,05 s` y `max_steps = 1000`.
-- Espacio de acción fijo, recortado a los límites de cada episodio para que no cambie con la aleatorización.
+- `v_rev_max = 0.5 m/s`, `gear_switch_time = 1 s`, 0.315 m front and rear overhangs.
+- `row_width = 0.5 m`, `crop_depth = 5 m` and valid-area margins.
+- Initial pose noise `(0.15 m, 0.15 m, 5°)`, only when geometry is randomized.
+- Step A: `dt = 0.1 s`, `max_steps = 500` (50 s) and success tolerances of 0.30 m and 10°. The environment defaults are `dt = 0.05 s` and `max_steps = 1000`.
+- Fixed action space, clipped to each episode's limits so that it does not change under randomization.
 
-**Problema abierto:** con la huella del Twizy, las calles más estrechas del rango de la propuesta (1,8 m) apenas dejan holgura, y ~10 % de los episodios de B y D empiezan ya en colisión. Hay que decidir si subir el mínimo, aleatorizar también la anchura del vehículo o descartar los episodios inviables.
+**Open issue:** with the Twizy's footprint, the narrowest rows in the proposal's range (1.8 m) leave almost no clearance, and ~10% of B and D episodes already start in collision. We need to decide whether to raise the minimum, also randomize the vehicle width, or discard infeasible episodes.
 
-## Referencias
+## References
 
 - Bengochea-Guevara, J. M. et al. *Drive-by-wire automation and field validation of a commercial electric vehicle for autonomous crop monitoring*. Smart Agricultural Technology 12 (2025) 101530.
 - Pindl, L. et al. *Reinforcement Learning for Autonomous Headland Turns*. ICINCO 2024.
-- Salimans, T. y Chen, R. *Learning Montezuma's Revenge from a Single Demonstration*. 2018 (backplay).
+- Salimans, T. and Chen, R. *Learning Montezuma's Revenge from a Single Demonstration*. 2018 (backplay).
 - Kumar, A. et al. *RMA: Rapid Motor Adaptation for Legged Robots*. RSS 2021.
 - Stable-Baselines3: https://stable-baselines3.readthedocs.io
